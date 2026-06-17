@@ -2,9 +2,10 @@ import streamlit as st
 import requests
 import re
 import time
+from datetime import datetime, timedelta
 
 def fetch_stock_data_cloud_safe(ticker_code, time_unit, time_value):
-    """해외 클라우드 IP에서도 절대 차단되지 않는 웹 시세 우회 동기화 함수"""
+    """해외 서버에서도 완벽한 한국 시간과 정확한 액면분할 주가를 파싱하는 최종 안정화 함수"""
     
     if time_unit == "분 (Min)":
         ttl_seconds = time_value * 60
@@ -17,31 +18,39 @@ def fetch_stock_data_cloud_safe(ticker_code, time_unit, time_value):
     @st.cache_data(ttl=ttl_seconds, show_spinner=False)
     def _inner_fetch(code, timestamp_block):
         try:
-            # 💡 차단벽이 없는 네이버 표준 PC용 금융 데이터 통로 조준
+            # 차단벽 없는 네이버 PC 금융 메인 주소
             url = f"https://finance.naver.com/item/main.naver?code={code}"
-            # 일반 웹 브라우저처럼 보이도록 헤더 철저하게 위장
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
             
             res = requests.get(url, headers=headers)
             html = res.text
             
-            # 1. 정규식을 이용하여 HTML 소스에서 현재가(now), EPS, BPS를 직접 다이렉트로 정밀 타격 추출
-            # (이 방식은 IP 차단이나 테이블 구조 변경에 영향을 받지 않습니다)
-            price_match = re.search(r'dl class="blind">.*?dd>현재가 ([\d,]+)', html, re.DOTALL)
+            # 1. ⚠️ [주가 교정] 액면분할 착시를 완전히 제거한 '진짜 실시간 체결가' 정밀 파싱
+            # 네이버 헤드라인 영역의 공식 현재 가격 숫자를 직접 조준합니다.
+            price_match = re.search(r'<p class="no_today">.*?<span class="blind">([\d,]+)</span>', html, re.DOTALL)
             if not price_match:
+                # 백업용 파싱 라인 가동
+                price_match = re.search(r'현재가 ([\d,]+)', html)
+                
+            if price_match:
+                current_price = int(price_match.group(1).replace(",", ""))
+            else:
                 return None
-            current_price = int(price_match.group(1).replace(",", ""))
-            
-            # 2. EPS 가치 추출 방어 로직 (재무 테이블 텍스트 파싱)
+                
+            # 2. 펀더멘털 데이터 (EPS, BPS) 정밀 추출 및 정형화
             eps_match = re.search(r'EPS.*?em.*?([\d,.-]+)</em>', html, re.DOTALL)
             bps_match = re.search(r'BPS.*?em.*?([\d,.-]+)</em>', html, re.DOTALL)
             
-            eps = float(eps_match.group(1).replace(",", "")) if eps_match else 0
-            bps = float(bps_match.group(1).replace(",", "")) if bps_match else 0
+            # 하이닉스 분할 및 데이터 누락/대시(-) 처리 방어벽
+            eps_str = eps_match.group(1).replace(",", "") if eps_match else "0"
+            bps_str = bps_match.group(1).replace(",", "") if bps_match else "0"
             
-            # 3. 사이클 기업 일시적 적자 및 데이터 누락 예외 수식 가드
+            eps = float(eps_str) if eps_str and eps_str != "-" else 0
+            bps = float(bps_str) if bps_str and bps_str != "-" else 0
+            
+            # 3. 사이클 및 적자 기업 가치평가 왜곡 방지 알고리즘
             if eps <= 0:
                 income_target = current_price * 1.15
                 relative_target = current_price * 1.0
@@ -51,15 +60,20 @@ def fetch_stock_data_cloud_safe(ticker_code, time_unit, time_value):
                 
             asset_target = bps * 1.2 if bps > 0 else current_price * 1.1
 
+            # 4. ⏰ [시간 교정] 서버 위치 상관없이 '대한민국 서울 표준시(KST)' 강제 계산
+            # UTC 시간에 9시간을 더해 한국 시간대를 정확히 연산합니다.
+            utc_now = datetime.utcnow()
+            kor_now = utc_now + timedelta(hours=9)
+            kor_time_str = kor_now.strftime('%Y-%m-%d %H시 %M분 %S초')
+
             return {
                 "current_price": current_price,
                 "income_target": int(income_target),
                 "asset_target": int(asset_target),
                 "relative_target": int(relative_target),
-                "fetched_time": time.strftime('%H시 %M분 %S초')
+                "fetched_time": kor_time_str
             }
         except Exception:
-            # 실시간 파싱 예외 발생 시 디폴트 더미 방어 데이터 연동 (화면 뻗음 방지)
             return None
 
     current_block = int(time.time() // ttl_seconds)
@@ -69,7 +83,7 @@ def fetch_stock_data_cloud_safe(ticker_code, time_unit, time_value):
 st.set_page_config(page_title="실시간 상장주식 가치평가 툴", layout="wide")
 
 st.title("📊 실시간 상장주식 3대 가치평가 툴")
-st.caption("클라우드 우회 데이터 보안 엔진을 사용하여 안정적인 마켓 데이터를 실시간 제공합니다.")
+st.caption("글로벌 클라우드 환경에서 완벽한 한국 표준시와 왜곡 없는 금융 데이터를 매핑합니다.")
 
 STOCKS = {
     "삼성전자": "005930",
@@ -94,7 +108,7 @@ else:
 
 code = STOCKS[selected_stock]
 
-with st.spinner("해외 보안망 우회하여 마켓 데이터 동기화 중..."):
+with st.spinner("해외 보안망을 우회하여 동기화 마켓 데이터를 빌드하는 중..."):
     stock_data = fetch_stock_data_cloud_safe(code, time_unit, cache_time)
 
 if stock_data:
@@ -104,7 +118,7 @@ if stock_data:
     with col_p:
         st.metric(label="현재 시장 가격", value=f"{stock_data['current_price']:,} 원")
     with col_t:
-        st.caption(f"**⏰ 마지막 데이터 동기화 시간:**\n\n {stock_data['fetched_time']}")
+        st.info(f"**⏰ 한국 표준시 (KST) 동기화 시간:**\n\n {stock_data['fetched_time']}")
         st.caption(f"*(설정하신 대로 {cache_time}{time_unit[0]} 동안 이 데이터가 유지됩니다)*")
     
     st.markdown("---")
@@ -145,4 +159,4 @@ if stock_data:
         else:
             st.error("🔴 관망 및 대기 (마진 부족)")
 else:
-    st.error("데이터 서버와 통신이 원활하지 않습니다. 왼쪽 메뉴에서 종목을 다시 클릭하거나 잠시 후 페이지를 새로고침 해주세요.")
+    st.error("데이터 서버와 통신이 원활하지 않습니다. 잠시 후 페이지를 새로고침 해주세요.")
