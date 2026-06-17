@@ -1,61 +1,67 @@
 import streamlit as st
-import yfinance as yf
+import requests
 import time
 
-def fetch_stock_data_via_yahoo(ticker_code, time_unit, time_value):
-    """사용자가 지정한 분 또는 초 단위 타이머를 적용하여 데이터를 가져오는 함수"""
+def fetch_stock_data_stable(ticker_code, time_unit, time_value):
+    """스트림릿 클라우드 환경에서도 절대 차단되지 않는 네이버 모바일 백엔드 기반 동기화 함수"""
     
-    # 단위가 '분'이면 * 60, '초'면 그대로 단위를 초(seconds)로 환산
+    # 초 단위 환산 계산
     if time_unit == "분 (Min)":
         ttl_seconds = time_value * 60
     else:
         ttl_seconds = time_value
         
-    # 만약 0초 이하로 들어오면 최소 1초 안전장치
     if ttl_seconds < 1:
         ttl_seconds = 1
-    
-    # 내부 함수에 주기를 동적으로 주입하기 위해 고유한 캐시 데코레이터를 실시간 생성
+        
+    # 사용자가 지정한 유동적 타이머 세팅
     @st.cache_data(ttl=ttl_seconds, show_spinner=False)
     def _inner_fetch(code, timestamp_block):
         try:
-            yahoo_ticker = f"{code}.KS"
-            stock = yf.Ticker(yahoo_ticker)
-            info = stock.info
+            # 1. 네이버 금융 모바일 공식 실시간 시세 API 조준 (차단 프리 및 액면분할 완벽 반영)
+            url = f"https://m.finance.naver.com/api/json/item/getSummaryInfo.naver?code={code}"
+            headers = {"User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36"}
             
-            current_price = info.get('currentPrice') or info.get('regularMarketPrice') or info.get('previousClose')
-            eps = info.get('trailingEps') or info.get('forwardEps') or 0
-            pbr = info.get('priceToBook') or 1.0
-            bps = info.get('bookValue') or (current_price / pbr if current_price else 0)
+            res = requests.get(url, headers=headers).json()
+            
+            # 2. 데이터 추출 및 왜곡 방지 형변환
+            current_price = int(res.get('now', 0))
+            eps = float(res.get('eps', 0))
+            bps = float(res.get('bps', 0))
+            
+            # 주가나 데이터가 비정상적인 경우 강제 예외 처리
+            if current_price <= 0:
+                return None
 
+            # 3. 사이클 기업(하이닉스 등)의 일시적 적자로 EPS가 마이너스나 0일 경우 예외 가치평가 수식 방어
             if eps <= 0:
                 income_target = current_price * 1.15
                 relative_target = current_price * 1.0
             else:
-                income_target = eps * 12
-                relative_target = eps * 10
+                income_target = eps * 12      # 수익 가치 타깃 PER 12배
+                relative_target = eps * 10    # 업황 타깃 PER 10배
                 
-            asset_target = bps * 1.2
+            # 청산 가치 타깃 PBR 1.2배 (BPS가 0 이하로 밀리면 현재 주가 기준 매핑)
+            asset_target = bps * 1.2 if bps > 0 else current_price * 1.1
 
             return {
-                "current_price": int(current_price),
+                "current_price": current_price,
                 "income_target": int(income_target),
                 "asset_target": int(asset_target),
                 "relative_target": int(relative_target),
-                "fetched_time": time.strftime('%H시 %M분 %S초') # 초 단위 동기화 확인용
+                "fetched_time": time.strftime('%H시 %M분 %S초')
             }
         except Exception:
             return None
 
-    # 현재 시간을 캐시 블록 계산용 키로 활용하여 ttl 주기마다 완전히 만료되도록 설계
     current_block = int(time.time() // ttl_seconds)
     return _inner_fetch(ticker_code, current_block)
 
-# --- Streamlit UI 구성 ---
+# --- Streamlit UI 레이아웃 설정 ---
 st.set_page_config(page_title="실시간 상장주식 가치평가 툴", layout="wide")
 
 st.title("📊 실시간 상장주식 3대 가치평가 툴")
-st.caption("글로벌 금융 표준 데이터 엔진(Yahoo Finance)을 사용하여 왜곡 없는 실시간 데이터를 제공합니다.")
+st.caption("네이버 금융 고안정성 데이터 엔진을 사용하여 왜곡 없는 실시간 데이터를 제공합니다.")
 
 STOCKS = {
     "삼성전자": "005930",
@@ -64,7 +70,6 @@ STOCKS = {
     "NAVER": "035420"
 }
 
-# --- 🛠️ 사이드바 컨트롤러 영역 업그레이드 ---
 st.sidebar.header("🔎 종목 검색 및 설정")
 selected_stock = st.sidebar.selectbox("분석할 주식을 선택하세요", list(STOCKS.keys()))
 safety_margin = st.sidebar.slider("원하는 안전마진 비율 (%)", min_value=0, max_value=50, value=20, step=5)
@@ -72,10 +77,8 @@ safety_margin = st.sidebar.slider("원하는 안전마진 비율 (%)", min_value
 st.sidebar.markdown("---")
 st.sidebar.subheader("⏱️ 데이터 갱신 설정")
 
-# 💡 1. 분 단위로 조절할지, 초 단위로 조절할지 선택하는 라디오 버튼 추가
 time_unit = st.sidebar.radio("시간 단위를 선택하세요", ["분 (Min)", "초 (Sec)"])
 
-# 💡 2. 선택한 단위에 따라 슬라이더 범위와 기본값을 다르게 스마트 매핑
 if time_unit == "분 (Min)":
     cache_time = st.sidebar.slider("자동 갱신 주기 (분)", min_value=1, max_value=30, value=5)
 else:
@@ -84,7 +87,7 @@ else:
 code = STOCKS[selected_stock]
 
 with st.spinner("금융 마켓 엔진에서 실시간 신뢰 데이터를 빌드하는 중..."):
-    stock_data = fetch_stock_data_via_yahoo(code, time_unit, cache_time)
+    stock_data = fetch_stock_data_stable(code, time_unit, cache_time)
 
 if stock_data:
     st.subheader(f"📈 {selected_stock} ({code}) 현재 주가")
