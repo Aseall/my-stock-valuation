@@ -184,60 +184,59 @@ else:
     cache_time = st.sidebar.slider("자동 갱신 주기 (초)", min_value=5, max_value=60, value=10, step=5)
 
 code = STOCKS[selected_stock]
+# --- 사용자 조정 가능한 멀티플 및 보정값 (UI) ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔧 모델 파라미터 (조정 가능)")
+eps_per_default = st.sidebar.number_input("EPS 기반 표준 PER (EPS 모델)", min_value=1, max_value=50, value=12)
+rel_per_default = st.sidebar.number_input("상대비교 표준 PER (비교 모델)", min_value=1, max_value=50, value=10)
+pbr_multiplier_default = st.sidebar.number_input("BPS 기반 표준 PBR (자산 모델)", min_value=0.1, max_value=5.0, value=1.2, step=0.1, format="%.1f")
 
-    # --- 사용자 조정 가능한 멀티플 및 보정값 (UI) ---
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🔧 모델 파라미터 (조정 가능)")
-    eps_per_default = st.sidebar.number_input("EPS 기반 표준 PER (EPS 모델)", min_value=1, max_value=50, value=12)
-    rel_per_default = st.sidebar.number_input("상대비교 표준 PER (비교 모델)", min_value=1, max_value=50, value=10)
-    pbr_multiplier_default = st.sidebar.number_input("BPS 기반 표준 PBR (자산 모델)", min_value=0.1, max_value=5.0, value=1.2, step=0.1, format="%.1f")
+# 정규화 EPS 입력 (선택): 사용자가 직접 넣으면 EPS 기반 모델에 우선 사용
+normalized_eps = st.sidebar.number_input("정규화 EPS (선택, 없으면 야후 EPS 사용)", value=0.0, step=0.01, format="%.2f")
 
-    # 정규화 EPS 입력 (선택): 사용자가 직접 넣으면 EPS 기반 모델에 우선 사용
-    normalized_eps = st.sidebar.number_input("정규화 EPS (선택, 없으면 야후 EPS 사용)", value=0.0, step=0.01, format="%.2f")
+# S-RIM / 반도체 전용값
+st.sidebar.markdown("---")
+required_return = st.sidebar.number_input("요구수익률 r (S-RIM, 소수)", min_value=0.01, max_value=0.2, value=0.08, step=0.01, format="%.2f")
+expected_roe_input = st.sidebar.number_input("예상 ROE (S-RIM, 소수, 0이면 야후값 사용)", min_value=0.0, max_value=1.0, value=0.0, step=0.01, format="%.2f")
+growth_rate = st.sidebar.number_input("지속성장률 g (S-RIM, 소수)", min_value=0.0, max_value=0.2, value=0.02, step=0.01, format="%.2f")
 
-    # S-RIM / 반도체 전용값
-    st.sidebar.markdown("---")
-    required_return = st.sidebar.number_input("요구수익률 r (S-RIM, 소수)", min_value=0.01, max_value=0.2, value=0.08, step=0.01, format="%.2f")
-    expected_roe_input = st.sidebar.number_input("예상 ROE (S-RIM, 소수, 0이면 야후값 사용)", min_value=0.0, max_value=1.0, value=0.0, step=0.01, format="%.2f")
-    growth_rate = st.sidebar.number_input("지속성장률 g (S-RIM, 소수)", min_value=0.0, max_value=0.2, value=0.02, step=0.01, format="%.2f")
+# 불러온 CONFIG에 종목별 기본값이 있으면 사이드바 기본값으로 반영
+stock_cfg = CONFIG.get(code, {})
+if stock_cfg:
+    eps_per_default = stock_cfg.get('eps_per', eps_per_default)
+    rel_per_default = stock_cfg.get('rel_per', rel_per_default)
+    pbr_multiplier_default = stock_cfg.get('pbr_mult', pbr_multiplier_default)
+    required_return = stock_cfg.get('required_return', required_return)
+    expected_roe_input = stock_cfg.get('expected_roe', expected_roe_input)
+    growth_rate = stock_cfg.get('growth_rate', growth_rate)
 
-    # 불러온 CONFIG에 종목별 기본값이 있으면 사이드바 기본값으로 반영
-    stock_cfg = CONFIG.get(code, {})
-    if stock_cfg:
-        eps_per_default = stock_cfg.get('eps_per', eps_per_default)
-        rel_per_default = stock_cfg.get('rel_per', rel_per_default)
-        pbr_multiplier_default = stock_cfg.get('pbr_mult', pbr_multiplier_default)
-        required_return = stock_cfg.get('required_return', required_return)
-        expected_roe_input = stock_cfg.get('expected_roe', expected_roe_input)
-        growth_rate = stock_cfg.get('growth_rate', growth_rate)
+# 저장 버튼: 현재 사이드바 파라미터를 종목 기본값으로 저장
+if st.sidebar.button("✨ 현재 파라미터를 이 종목 기본값으로 저장"):
+    CONFIG[code] = {
+        'eps_per': eps_per_default,
+        'rel_per': rel_per_default,
+        'pbr_mult': pbr_multiplier_default,
+        'required_return': required_return,
+        'expected_roe': expected_roe_input,
+        'growth_rate': growth_rate
+    }
+    ok = save_config(CONFIG)
+    if ok:
+        st.sidebar.success("저장 완료: valuation_config.json")
+    else:
+        st.sidebar.error("저장 실패: 파일 쓰기 오류")
+# 내보내기 / 초기화 버튼
+if st.sidebar.button("📤 현재 종목 파라미터 내보내기 (다운로드)"):
+    payload = CONFIG.get(code, {})
+    payload_bytes = json.dumps({code: payload}, ensure_ascii=False, indent=2).encode('utf-8')
+    st.sidebar.download_button(label="Download JSON", data=payload_bytes, file_name=f"{code}_params.json", mime='application/json')
 
-    # 저장 버튼: 현재 사이드바 파라미터를 종목 기본값으로 저장
-    if st.sidebar.button("✨ 현재 파라미터를 이 종목 기본값으로 저장"):
-        CONFIG[code] = {
-            'eps_per': eps_per_default,
-            'rel_per': rel_per_default,
-            'pbr_mult': pbr_multiplier_default,
-            'required_return': required_return,
-            'expected_roe': expected_roe_input,
-            'growth_rate': growth_rate
-        }
-        ok = save_config(CONFIG)
-        if ok:
-            st.sidebar.success("저장 완료: valuation_config.json")
-        else:
-            st.sidebar.error("저장 실패: 파일 쓰기 오류")
-    # 내보내기 / 초기화 버튼
-    if st.sidebar.button("📤 현재 종목 파라미터 내보내기 (다운로드)"):
-        payload = CONFIG.get(code, {})
-        payload_bytes = json.dumps({code: payload}, ensure_ascii=False, indent=2).encode('utf-8')
-        st.sidebar.download_button(label="Download JSON", data=payload_bytes, file_name=f"{code}_params.json", mime='application/json')
-
-    if st.sidebar.button("♻️ 이 종목 기본값 초기화 (삭제)"):
-        if CONFIG.pop(code, None) is not None:
-            save_config(CONFIG)
-            st.sidebar.success("초기화 완료")
-        else:
-            st.sidebar.info("기본값이 설정되어 있지 않습니다.")
+if st.sidebar.button("♻️ 이 종목 기본값 초기화 (삭제)"):
+    if CONFIG.pop(code, None) is not None:
+        save_config(CONFIG)
+        st.sidebar.success("초기화 완료")
+    else:
+        st.sidebar.info("기본값이 설정되어 있지 않습니다.")
 
 with st.spinner("야후 파이낸셜 마켓 엔진에서 실시간 데이터를 빌드하는 중..."):
     stock_data = fetch_stock_data_yahoo_pure(code, time_unit, cache_time)
