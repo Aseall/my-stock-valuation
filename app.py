@@ -361,6 +361,66 @@ if stock_data:
         else:
             st.error("🔴 관망 및 대기 (마진 부족)")
 
+    # --- 간단한 가치평가 v1 ---
+    st.markdown("---")
+    with st.expander("🔢 가치평가 앱 v1 (간단 입력/출력)", expanded=False):
+        st.write("입력값을 직접 조정하여 다양한 시나리오를 테스트하세요.")
+        col_in1, col_in2 = st.columns(2)
+        # 기본값은 야후에서 가져온 값이나 사용자가 덮어쓸 수 있게 함
+        default_cp = stock_data.get('current_price') or 0
+        default_eps = stock_data.get('raw_eps') or 0.0
+        default_bps = stock_data.get('raw_bps') or 0.0
+        default_roe = stock_data.get('raw_roe') or 0.0
+
+        with col_in1:
+            inp_name = st.text_input("종목명", value=selected_stock)
+            inp_current = st.number_input("현재주가", value=float(default_cp), step=100.0)
+            inp_eps = st.number_input("EPS", value=float(default_eps), format="%.2f")
+            inp_bps = st.number_input("BPS", value=float(default_bps), format="%.2f")
+        with col_in2:
+            inp_roe = st.number_input("ROE (소수)", value=float(default_roe), format="%.4f")
+            inp_eps_growth = st.number_input("예상 EPS 성장률 (소수)", value=0.05, format="%.4f")
+            inp_target_per = st.number_input("적정 PER", value=float(eps_per_default), min_value=0.1)
+            inp_target_pbr = st.number_input("적정 PBR", value=float(pbr_multiplier_default), min_value=0.01, format="%.2f")
+            inp_peer_per = st.number_input("동종업계 평균 PER", value=float(rel_per_default), min_value=0.1)
+
+        st.markdown("---")
+        st.write("**가중치 설정 (PER, PBR, 상대, PEG)** — 합계가 1이 아니면 자동 정규화됩니다.")
+        w1 = st.number_input("PER 가중치", value=0.25, min_value=0.0, max_value=1.0, format="%.2f")
+        w2 = st.number_input("PBR 가중치", value=0.25, min_value=0.0, max_value=1.0, format="%.2f")
+        w3 = st.number_input("상대가치 가중치", value=0.25, min_value=0.0, max_value=1.0, format="%.2f")
+        w4 = st.number_input("PEG 가중치", value=0.25, min_value=0.0, max_value=1.0, format="%.2f")
+
+        weights = [w1, w2, w3, w4]
+        s = sum(weights)
+        if s == 0:
+            norm_weights = [0.25, 0.25, 0.25, 0.25]
+        else:
+            norm_weights = [w / s for w in weights]
+
+        # 계산
+        per_price = inp_eps * inp_target_per if inp_eps and inp_target_per else 0.0
+        pbr_price = inp_bps * inp_target_pbr if inp_bps and inp_target_pbr else 0.0
+        rel_price = inp_eps * inp_peer_per if inp_eps and inp_peer_per else 0.0
+        peg_price = inp_eps * inp_eps_growth if inp_eps and inp_eps_growth else 0.0
+
+        weighted_fair_price = (per_price * norm_weights[0] + pbr_price * norm_weights[1] + rel_price * norm_weights[2] + peg_price * norm_weights[3])
+        upside = ((weighted_fair_price - inp_current) / inp_current) * 100 if inp_current and inp_current > 0 else 0.0
+
+        # 출력
+        out_col1, out_col2 = st.columns(2)
+        with out_col1:
+            st.write(f"**현재주가:** {int(inp_current):,} 원")
+            st.write(f"**PER 목표주가:** {int(per_price):,} 원")
+            st.write(f"**PBR 목표주가:** {int(pbr_price):,} 원")
+        with out_col2:
+            st.write(f"**상대가치 목표주가:** {int(rel_price):,} 원")
+            st.write(f"**PEG 목표주가:** {int(peg_price):,} 원")
+            st.write(f"**종합 목표주가:** {int(weighted_fair_price):,} 원")
+
+        st.markdown("---")
+        st.write(f"**상승여력:** {upside:.2f} %")
+
     # --- 반도체 특화: PBR 밴드 및 S-RIM ---
     st.markdown("---")
     if selected_stock in ("SK하이닉스", "삼성전자"):
